@@ -1,18 +1,24 @@
 package torasu.anddev68.jp.torasu;
 
+import android.app.AlertDialog;
 import android.content.Context;
+import android.content.DialogInterface;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
+import android.graphics.Path;
 import android.graphics.Point;
 import android.graphics.PorterDuff;
+import android.text.Layout;
 import android.util.AttributeSet;
 import android.util.Log;
 import android.util.Pair;
 import android.view.GestureDetector;
+import android.view.LayoutInflater;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.GestureDetector.SimpleOnGestureListener;
+import android.widget.EditText;
 import android.widget.Toast;
 
 import java.util.ArrayList;
@@ -26,9 +32,11 @@ import java.util.Set;
  */
 public class MyView extends View {
 
-
     private HashSet<Point> setten;
     private HashSet<Pair<Point,Point>> youso;
+    private ArrayList<Kotei> kotei;
+    private ArrayList<Kajuu> kajuu;
+
     private Point selection;
 
     public MyView(Context context) {
@@ -90,13 +98,52 @@ public class MyView extends View {
             int x = (x1+x2)/2;
             int y = (y1+y2)/2;
             canvas.drawText(""+i, x, y, redPaint);
+        }
+        //  固定点描画
+        for(Kotei tmp : kotei){
+            int x = tmp.p.x * getWidth() / LINE_X_NUM;
+            int y = tmp.p.y * getHeight() / LINE_Y_NUM;
+            //  三角を書く
+            Point a = new Point(x,y);
+            Point b = new Point(x-30,y+30);
+            Point c = new Point(x+30,y+30);
+            Path path = triangle(a,b,c);
+            canvas.drawPath(path,koteiPaint);
+            //  ローラ支持（ｘ開放）の場合は支点も
+            if(tmp.x==0){
+                canvas.drawLine(x-30, y+40, x+30, y+40, koteiPaint);
+            }
 
         }
+        //  荷重描画
+        for(Kajuu tmp: kajuu){
+            int x = tmp.p.x * getWidth() / LINE_X_NUM;
+            int y = tmp.p.y * getHeight() / LINE_Y_NUM;
+            int fx = tmp.x;
+            int fy = tmp.y;
+            int x2 = (tmp.p.x+fx) * getWidth() / LINE_X_NUM;
+            int y2 = (tmp.p.y+fy) * getHeight() / LINE_Y_NUM;
+            //  矢印を書く
+            canvas.drawLine(x, y, x2, y2,kajuuPaint);
+            if(fx==0) {
+                canvas.drawLine(x2, y2, x2-30, (y2+y)/2, kajuuPaint);
+                canvas.drawLine(x2, y2, x2+30, (y2+y)/2, kajuuPaint);
+            }
+            else if(fy==0) {
+                canvas.drawLine(x2, y2, (x2+x)/2, y2-30, kajuuPaint);
+                canvas.drawLine(x2, y2, (x2+x)/2, y2+30, kajuuPaint);
+            }else{
+                canvas.drawLine(x2, y2, x2, y2-30, kajuuPaint);
+                canvas.drawLine(x2, y2, x2-30, y2, kajuuPaint);
+            }
+        }
+
 
         //canvas.drawText("一番左下が0,0になります",getWidth()-1000,getHeight()-50,textPaint);
 
     }
 
+    /* 初期化メソッド */
     private void init(){
         strokePaint = new Paint();
         strokePaint.setStrokeWidth(1);
@@ -125,10 +172,19 @@ public class MyView extends View {
         blackPaint.setStrokeWidth(3);
         blackPaint.setTextSize(30);
 
+        koteiPaint = new Paint();
+        koteiPaint.setStyle(Paint.Style.STROKE);
+        koteiPaint.setStrokeWidth(6);
+        koteiPaint.setColor(Color.GREEN);
+
+        kajuuPaint = new Paint();
+        kajuuPaint.setStyle(Paint.Style.STROKE);
+        kajuuPaint.setColor(Color.BLUE);
+        kajuuPaint.setStrokeWidth(6);
+
         gestureDetector = new GestureDetector(getContext(),gestureListener);
 
-        setten = new HashSet<>();
-        youso = new HashSet<>();
+        reset();
     }
 
     /* 現在の状態をテキストに吐き出す */
@@ -153,7 +209,7 @@ public class MyView extends View {
         }
 
         //   ヘッダーを書き出す
-       data.add(String.format("%d %d 0 0",setten.size(),youso.size()));
+       data.add(String.format("%d %d %d %d",setten.size(),youso.size(), kajuu.size(), kotei.size()));
 
         //  接点を書き出す
         settenIt = setten.iterator();
@@ -173,6 +229,18 @@ public class MyView extends View {
             data.add(String.format("%d %d %d %d", idx1, idx2, 1, 1));
         }
 
+        //  荷重の処理
+        for(Kajuu tmp : kajuu){
+            int index = indexTable.get(tmp.p);
+            data.add(String.format("%d %d %d",index, tmp.x, tmp.y));
+        }
+
+        //  固定点の処理
+        for(Kotei tmp: kotei){
+            int index = indexTable.get(tmp.p);
+            data.add(String.format("%d %d %d",index, tmp.x, tmp.y));
+        }
+
         return data;
     }
     public String dumpString(){
@@ -184,13 +252,39 @@ public class MyView extends View {
         }
         return sb.toString();
     }
+    public String dumpStringWindows(){
+        ArrayList<String> data = dumpStrings();
+        StringBuilder sb = new StringBuilder();
+        for(String s : data) {
+            sb.append(s);
+            sb.append("\r\n");
+        }
+        return sb.toString();
+    }
 
+    /* リセット用メソッド */
+    public void reset(){
+        setten = new HashSet<>();
+        youso = new HashSet<>();
+        kotei = new ArrayList<>();
+        kajuu = new ArrayList<>();
+        selection = null;
+    }
 
     /* タッチ処理用メソッド */
     private void onGestureDown(MotionEvent e){
         Log.d("Down","Down");
         int x = rawXToFieldX(e.getX());
         int y = rawYToFieldY(e.getY());
+        listener.onClick(x,y);
+    }
+    private void onGestureScroll(MotionEvent e1, MotionEvent e2, float distanceX, float distanceY){
+        /* 動いた距離が一定以下なら点タッチと判定 */
+        Log.d("Scroll",String.format("%f,%f",distanceX,distanceY));
+    }
+
+    /* 接点/要素/固定点/荷重を設置するメソッド */
+    public void putSettenAndYouso(int x, int y){
         Point p =new Point(x,y);
         if( setten.contains(p)){   //  既に置いてある接点の場合
             if( selection!= null){  //  1点が選択済みなら
@@ -209,15 +303,53 @@ public class MyView extends View {
         }
 
 
-
-
-        invalidate();
-
-
     }
-    private void onGestureScroll(MotionEvent e1, MotionEvent e2, float distanceX, float distanceY){
-        /* 動いた距離が一定以下なら点タッチと判定 */
-        Log.d("Scroll",String.format("%f,%f",distanceX,distanceY));
+    private void putKotei(Point p, int x, int y){
+        kotei.add(new Kotei(p,x,y));
+    }
+    private void putKajuu(Point p,int x,int y){
+        kajuu.add(new Kajuu(p,x,y));
+    }
+
+    /* 置くものを選ぶメソッド */
+    public void openKoteiChooseDialog(final int x,final int y){
+        AlertDialog dialog = new AlertDialog.Builder(getContext())
+                .setTitle("固定条件を選択してください")
+                .setPositiveButton("ピン支持(xy固定)", new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialogInterface, int i) {
+                        Point p =new Point(x,y);
+                        putKotei(p,1,1);
+                        invalidate();
+                    }
+                })
+                .setNegativeButton("ローラ支持(y固定)", new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialogInterface, int i) {
+                        Point p =new Point(x,y);
+                        putKotei(p,0,1);
+                        invalidate();
+                    }
+                })
+                .show();
+    }
+    public void openKajuuChooseDialog(final int x,final int y){
+        LayoutInflater inflater = LayoutInflater.from(getContext());
+        View view = inflater.inflate(R.layout.content_kajuu_dialog,null);
+        final EditText editText = (EditText) view.findViewById(R.id.editText1);
+        final EditText editText2 = (EditText) view.findViewById(R.id.editText2);
+        AlertDialog dialog = new AlertDialog.Builder(getContext())
+                .setTitle("荷重を設定してください")
+                .setView(view)
+                .setPositiveButton("OK", new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialogInterface, int i) {
+                        int fx = Integer.parseInt(editText.getText().toString());
+                        int fy = Integer.parseInt(editText2.getText().toString());
+                        putKajuu(new Point(x,y),fx,fy);
+                    }
+                })
+                .show();
     }
 
 
@@ -232,6 +364,9 @@ public class MyView extends View {
         return fy;
     }
 
+
+
+
     /**
      *  距離を返す
      *  x,yのどちらか長いほう
@@ -241,13 +376,34 @@ public class MyView extends View {
         return Math.max(Math.abs(p1.x-p2.x),Math.abs(p1.y-p2.y));
     }
 
+    private ArrayList<Point> hashSetToArrayList(HashSet<Point> hashMap){
+        ArrayList<Point> list = new ArrayList<>();
+        for(Point p : hashMap){
+            list.add(p);
+        }
+        return list;
+    }
 
+    private Path triangle(Point a, Point b, Point c){
+        Path path = new Path();
+        path.setFillType(Path.FillType.EVEN_ODD);
+        path.moveTo(a.x, a.y);
+        path.lineTo(b.x, b.y);
+        path.moveTo(b.x, b.y);
+        path.lineTo(c.x, c.y);
+        path.moveTo(c.x, c.y);
+        path.lineTo(a.x, a.y);
+        path.close();
+        return path;
+    }
 
 
     private Paint strokePaint;
     private Paint fillPaint;
     private Paint textPaint;
     private Paint pointPaint;
+    private Paint koteiPaint;
+    private Paint kajuuPaint;
 
     private Paint redPaint;
     private Paint blackPaint;
@@ -269,4 +425,33 @@ public class MyView extends View {
             return super.onScroll(e1,e2,distanceX,distanceY);
         }
     };
+
+    private class Kotei{
+        Point p;
+        int x,y;
+        public Kotei(Point p,int x,int y){
+            this.x = x;
+            this.y = y;
+            this.p = p;
+        }
+    }
+    private class Kajuu{
+        int x,y;
+        Point p;
+        public Kajuu(Point p,int x,int y){
+            this.p = p;
+            this.x = x;
+            this.y = y;
+        }
+    }
+
+    public interface OnClickedGridListener{
+        public void onClick(int x,int y);
+    }
+    private OnClickedGridListener listener;
+    public void setOnClickedGridListener(OnClickedGridListener l){
+        this.listener = l;
+    }
+
+
 }
